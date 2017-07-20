@@ -1,0 +1,7 @@
+[package]
+name = "motifs"
+version = "0.1.0"
+authors = ["ortho 'the darkness' stice <ortho.the.d.stice@gmail.com>"]
+
+[dependencies]
+ndarray = "*"
