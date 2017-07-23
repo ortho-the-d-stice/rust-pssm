@@ -1,3 +1,5 @@
+
+#[macro_use]
 extern crate ndarray;
 
 use ndarray::prelude::{ Array2, Axis };
@@ -20,6 +22,7 @@ impl BasePos {
     }
 }
 
+#[derive(Debug)]
 pub struct Motif {
     pub seqs:      Vec<Vec<u8>>,
     pub counts:    Array2<u16>,
@@ -82,10 +85,16 @@ impl Motif {
     /// update scores field based on counts & pseudocounts
     fn calc_scores(&mut self) {
         for seq_i in 0 .. self.seqs[0].len() {
+            let mut tot: f32 = 0.0;
+            // FIXME: slices should be cleaner
+            for base_i in 0 .. 4 {
+                tot += self.counts[[seq_i, base_i]] as f32;
+                tot += self.pseudoct[base_i];
+            }
             let mut scores = self.scores.subview_mut(Axis(0), seq_i);
             for base_i in 0 .. 4 {
                 scores[base_i] = (self.counts[[seq_i, base_i]] as f32 + self.pseudoct[base_i])
-                    / self.seq_ct as f32;
+                    / tot;
             }
         }
     }
@@ -99,12 +108,81 @@ impl Motif {
         Vec::new()
     }
 
+    /// apply PSM to sequence, finding the offset with the highest score
+    /// return None if sequence is too short
+    /// see:
+    ///   MATCHTM: a tool for searching transcription factor binding sites in DNA sequences
+    ///   Nucleic Acids Res. 2003 Jul 1; 31(13): 3576–3579
+    ///   https://www.ncbi.nlm.nih.gov/pmc/articles/PMC169193/
+    ///
+    pub fn score(&self, seq: &[u8]) -> Option<(usize, f32)> {
+        let (pwm_len, _) = self.counts.dim();
+        if seq.len() < pwm_len {
+            return None
+        }
+
+        // score corresponding to "worst" base at each position
+        // FIXME: iter ...
+        let mut min_score = 0.0;
+        for i in 0 .. pwm_len {
+            let mut min_sc = 999.9;
+            for b in 0 .. 4 {
+                if self.scores[[i,b]] < min_sc {
+                    min_sc = self.scores[[i,b]];
+                }
+            }
+            min_score += min_sc;
+        }
+
+        // score corresponding to "best" base at each position
+        let mut max_score = 0.0;
+        for i in 0 .. pwm_len {
+            let mut max_sc = -999.9;
+            for b in 0 .. 4 {
+                if self.scores[[i,b]] > max_sc {
+                    max_sc = self.scores[[i,b]];
+                }
+            }
+            max_score += max_sc;
+        }
+
+        let mut best_start = 0;
+        let mut best_score = -1.0;
+        for start in 0 .. seq.len() - pwm_len {
+            let mut tot = 0.0;
+            for i in 0 .. pwm_len {
+                tot += self.scores[[i, BasePos::get(seq[start+i])]];
+            }
+            if tot > best_score {
+                best_score = tot;
+                best_start = start;
+            }
+        }
+
+        Some((best_start, best_score))
+    }
 }
 
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     #[test]
-    fn it_works() {
+    fn simple_pwm() {
+        let pwm = Motif::new( vec![ b"AAAA".to_vec(),
+                                    b"TTTT".to_vec(),
+                                    b"GGGG".to_vec(),
+                                    b"CCCC".to_vec() ] );
+        assert_eq!( pwm.scores, Array2::from_elem((4,4), 0.25) );
+    }
+    #[test]
+    fn find_motif() {
+        let pwm = Motif::new( vec![b"ATGC".to_vec()] );
+        let seq = b"GGGGATGCGGGG";
+        if let Some((start,_)) = pwm.score(seq) {
+            assert_eq!(start, 4);
+        } else {
+            assert!(false);
+        }
     }
 }
