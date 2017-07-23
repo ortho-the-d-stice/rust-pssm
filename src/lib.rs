@@ -1,5 +1,4 @@
 
-#[macro_use]
 extern crate ndarray;
 
 use ndarray::prelude::{ Array2, Axis };
@@ -29,6 +28,10 @@ pub struct Motif {
     pub pseudoct:  [f32; 4],
     seq_ct:        usize,
     scores:        Array2<f32>,
+    /// sum of "worst" base at each position
+    min_score:     f32,
+    /// sum of "best" base at each position
+    max_score:     f32,
 }
 
 impl Motif {
@@ -36,11 +39,13 @@ impl Motif {
         // null case
         if seqs.len() == 0 {
             return Motif {
-                seq_ct:   0,
-                seqs:     Vec::new(),
-                counts:   Array2::zeros((0,0)),
-                pseudoct: [0.0; 4],
-                scores:   Array2::zeros((0,0)),
+                seq_ct:    0,
+                seqs:      Vec::new(),
+                counts:    Array2::zeros((0,0)),
+                pseudoct:  [0.0; 4],
+                scores:    Array2::zeros((0,0)),
+                min_score: 0.0,
+                max_score: 0.0,
             }
         }
 
@@ -58,11 +63,13 @@ impl Motif {
         }
 
         let mut m = Motif {
-            seq_ct:   seqs.len(),
-            seqs:     seqs,
-            counts:   counts,
-            pseudoct: [0.5; 4],
-            scores:   Array2::zeros((seqlen,4)),
+            seq_ct:    seqs.len(),
+            seqs:      seqs,
+            counts:    counts,
+            pseudoct:  [0.5; 4],
+            scores:    Array2::zeros((seqlen,4)),
+            min_score: 0.0,
+            max_score: 0.0,
         };
         m.calc_scores();
         m
@@ -97,6 +104,30 @@ impl Motif {
                     / tot;
             }
         }
+
+        let (pwm_len, _) = self.counts.dim();
+        // score corresponding to "worst" base at each position
+        // FIXME: iter ...
+        for i in 0 .. pwm_len {
+            let mut min_sc = 999.9;
+            for b in 0 .. 4 {
+                if self.scores[[i,b]] < min_sc {
+                    min_sc = self.scores[[i,b]];
+                }
+            }
+            self.min_score += min_sc;
+        }
+
+        // score corresponding to "best" base at each position
+        for i in 0 .. pwm_len {
+            let mut max_sc = -999.9;
+            for b in 0 .. 4 {
+                if self.scores[[i,b]] > max_sc {
+                    max_sc = self.scores[[i,b]];
+                }
+            }
+            self.max_score += max_sc;
+        }
     }
 
     /// calculate consensus sequence
@@ -121,31 +152,6 @@ impl Motif {
             return None
         }
 
-        // score corresponding to "worst" base at each position
-        // FIXME: iter ...
-        let mut min_score = 0.0;
-        for i in 0 .. pwm_len {
-            let mut min_sc = 999.9;
-            for b in 0 .. 4 {
-                if self.scores[[i,b]] < min_sc {
-                    min_sc = self.scores[[i,b]];
-                }
-            }
-            min_score += min_sc;
-        }
-
-        // score corresponding to "best" base at each position
-        let mut max_score = 0.0;
-        for i in 0 .. pwm_len {
-            let mut max_sc = -999.9;
-            for b in 0 .. 4 {
-                if self.scores[[i,b]] > max_sc {
-                    max_sc = self.scores[[i,b]];
-                }
-            }
-            max_score += max_sc;
-        }
-
         let mut best_start = 0;
         let mut best_score = -1.0;
         for start in 0 .. seq.len() - pwm_len {
@@ -159,7 +165,7 @@ impl Motif {
             }
         }
 
-        Some((best_start, best_score))
+        Some((best_start, (best_score - self.min_score) / (self.max_score - self.min_score)))
     }
 }
 
@@ -179,8 +185,9 @@ mod tests {
     fn find_motif() {
         let pwm = Motif::new( vec![b"ATGC".to_vec()] );
         let seq = b"GGGGATGCGGGG";
-        if let Some((start,_)) = pwm.score(seq) {
+        if let Some((start,score)) = pwm.score(seq) {
             assert_eq!(start, 4);
+            assert_eq!(score, 1.0);
         } else {
             assert!(false);
         }
