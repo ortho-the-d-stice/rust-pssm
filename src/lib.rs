@@ -1,6 +1,6 @@
 
 extern crate ndarray;
-
+use std::convert::From;
 use ndarray::prelude::{ Array2, Axis };
 
 pub enum BasePos {
@@ -23,57 +23,18 @@ impl BasePos {
 
 #[derive(Debug)]
 pub struct Motif {
-    pub seqs:      Vec<Vec<u8>>,
-    pub counts:    Array2<u16>,
+    pub seqs:      Option<Vec<Vec<u8>>>,
+    pub counts:    Option<Array2<u16>>,
     pub pseudoct:  [f32; 4],
-    seq_ct:        usize,
-    scores:        Array2<f32>,
+    pub seq_ct:        usize,
+    pub scores:        Array2<f32>,
     /// sum of "worst" base at each position
-    min_score:     f32,
+    pub min_score:     f32,
     /// sum of "best" base at each position
-    max_score:     f32,
+    pub max_score:     f32,
 }
 
 impl Motif {
-    pub fn new(seqs: Vec<Vec<u8>>) -> Motif {
-        // null case
-        if seqs.len() == 0 {
-            return Motif {
-                seq_ct:    0,
-                seqs:      Vec::new(),
-                counts:    Array2::zeros((0,0)),
-                pseudoct:  [0.0; 4],
-                scores:    Array2::zeros((0,0)),
-                min_score: 0.0,
-                max_score: 0.0,
-            }
-        }
-
-        let seqlen = seqs[0].len();
-        let mut counts = Array2::zeros((seqlen, 4));
-
-        for seq in seqs.iter() {
-            if seq.len() != seqlen {
-                panic!("inconsistent sequence lengths");
-            }
-
-            for (idx, base) in seq.iter().enumerate() {
-                counts[[idx, BasePos::get(*base)]] += 1;
-            }
-        }
-
-        let mut m = Motif {
-            seq_ct:    seqs.len(),
-            seqs:      seqs,
-            counts:    counts,
-            pseudoct:  [0.5; 4],
-            scores:    Array2::zeros((seqlen,4)),
-            min_score: 0.0,
-            max_score: 0.0,
-        };
-        m.calc_scores();
-        m
-    }
 
     /// set pseudocount for all bases
     pub fn pseudocts(&mut self, ct: f32) -> &mut Self {
@@ -91,21 +52,26 @@ impl Motif {
 
     /// update scores field based on counts & pseudocounts
     fn calc_scores(&mut self) {
-        for seq_i in 0 .. self.seqs[0].len() {
+        let seqs = self.seqs.as_ref().expect("calc_scores called without seqs");
+        for seq_i in 0 .. seqs[0].len() {
             let mut tot: f32 = 0.0;
             // FIXME: slices should be cleaner
             for base_i in 0 .. 4 {
-                tot += self.counts[[seq_i, base_i]] as f32;
+                tot += self.counts.as_ref()
+                    .expect("calc_scores called without counts")[[seq_i, base_i]]
+                    as f32;
                 tot += self.pseudoct[base_i];
             }
             let mut scores = self.scores.subview_mut(Axis(0), seq_i);
             for base_i in 0 .. 4 {
-                scores[base_i] = (self.counts[[seq_i, base_i]] as f32 + self.pseudoct[base_i])
+                scores[base_i] = (self.counts.as_ref()
+                                  .expect("calc_scores called without counts")
+                                  [[seq_i, base_i]] as f32 + self.pseudoct[base_i])
                     / tot;
             }
         }
 
-        let (pwm_len, _) = self.counts.dim();
+        let (pwm_len, _) = self.counts.as_ref().expect("no dim without counts").dim();
         // score corresponding to "worst" base at each position
         // FIXME: iter ...
         for i in 0 .. pwm_len {
@@ -147,7 +113,7 @@ impl Motif {
     ///   https://www.ncbi.nlm.nih.gov/pmc/articles/PMC169193/
     ///
     pub fn score(&self, seq: &[u8]) -> Option<(usize, f32)> {
-        let (pwm_len, _) = self.counts.dim();
+        let (pwm_len, _) = self.counts.as_ref().expect("score: no counts").dim();
         if seq.len() < pwm_len {
             return None
         }
@@ -169,13 +135,69 @@ impl Motif {
     }
 }
 
+impl From<Vec<Vec<u8>>> for Motif {
+    fn from(seqs: Vec<Vec<u8>>) -> Self {
+        // null case
+        if seqs.len() == 0 {
+            return Motif {
+                seq_ct:    0,
+                seqs:      None,
+                counts:    None,
+                pseudoct:  [0.0; 4],
+                scores:    Array2::zeros((0,0)),
+                min_score: 0.0,
+                max_score: 0.0,
+            }
+        }
+
+        let seqlen = seqs[0].len();
+        let mut counts = Array2::zeros((seqlen, 4));
+
+        for seq in seqs.iter() {
+            if seq.len() != seqlen {
+                panic!("inconsistent sequence lengths");
+            }
+
+            for (idx, base) in seq.iter().enumerate() {
+                counts[[idx, BasePos::get(*base)]] += 1;
+            }
+        }
+
+        let mut m = Motif {
+            seq_ct:    seqs.len(),
+            seqs:      Some(seqs),
+            counts:    Some(counts),
+            pseudoct:  [0.5; 4],
+            scores:    Array2::zeros((seqlen,4)),
+            min_score: 0.0,
+            max_score: 0.0,
+        };
+        m.calc_scores();
+        m
+    }
+}
+
+impl From<Array2<f32>> for Motif {
+    fn from(scores: Array2<f32>) -> Self {
+        Motif {
+            seq_ct:    0,
+            seqs:      None,
+            counts:    None,
+            pseudoct:  [0.0; 4],
+            scores:    scores,
+            min_score: 0.0,
+            max_score: 0.0,
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn simple_pwm() {
-        let pwm = Motif::new( vec![ b"AAAA".to_vec(),
+        let pwm = Motif::from( vec![ b"AAAA".to_vec(),
                                     b"TTTT".to_vec(),
                                     b"GGGG".to_vec(),
                                     b"CCCC".to_vec() ] );
@@ -183,7 +205,7 @@ mod tests {
     }
     #[test]
     fn find_motif() {
-        let pwm = Motif::new( vec![b"ATGC".to_vec()] );
+        let pwm = Motif::from( vec![b"ATGC".to_vec()] );
         let seq = b"GGGGATGCGGGG";
         if let Some((start,score)) = pwm.score(seq) {
             assert_eq!(start, 4);
