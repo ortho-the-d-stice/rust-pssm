@@ -19,9 +19,18 @@ impl BasePos {
             _ => panic!("unrecognized base"),
         }
     }
+    pub fn put(code: usize) -> u8 {
+        match code {
+            0 => b'A',
+            1 => b'T',
+            2 => b'G',
+            3 => b'C',
+            _ => panic!("unrecognized code"),
+        }
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Motif {
     pub seqs:      Option<Vec<Vec<u8>>>,
     pub counts:    Option<Array2<u16>>,
@@ -51,27 +60,32 @@ impl Motif {
     }
 
     /// update scores field based on counts & pseudocounts
-    fn calc_scores(&mut self) {
-        let seqs = self.seqs.as_ref().expect("calc_scores called without seqs");
-        for seq_i in 0 .. seqs[0].len() {
-            let mut tot: f32 = 0.0;
-            // FIXME: slices should be cleaner
-            for base_i in 0 .. 4 {
-                tot += self.counts.as_ref()
-                    .expect("calc_scores called without counts")[[seq_i, base_i]]
-                    as f32;
-                tot += self.pseudoct[base_i];
-            }
-            let mut scores = self.scores.subview_mut(Axis(0), seq_i);
-            for base_i in 0 .. 4 {
-                scores[base_i] = (self.counts.as_ref()
-                                  .expect("calc_scores called without counts")
-                                  [[seq_i, base_i]] as f32 + self.pseudoct[base_i])
-                    / tot;
-            }
+    pub fn calc_scores(&mut self) {
+        match self.seqs {
+            Some(_) => {
+                let seqs = self.seqs.as_ref().expect("calc_scores called without seqs");
+                for seq_i in 0 .. seqs[0].len() {
+                    let mut tot: f32 = 0.0;
+                    // FIXME: slices should be cleaner
+                    for base_i in 0 .. 4 {
+                        tot += self.counts.as_ref()
+                            .expect("calc_scores called without counts")[[seq_i, base_i]]
+                            as f32;
+                        tot += self.pseudoct[base_i];
+                    }
+                    let mut scores = self.scores.subview_mut(Axis(0), seq_i);
+                    for base_i in 0 .. 4 {
+                        scores[base_i] = (self.counts.as_ref()
+                                          .expect("calc_scores called without counts")
+                                          [[seq_i, base_i]] as f32 + self.pseudoct[base_i])
+                            / tot;
+                    }
+                }
+            },
+            _ => ()
         }
 
-        let (pwm_len, _) = self.counts.as_ref().expect("no dim without counts").dim();
+        let (pwm_len, _) = self.scores.dim();
         // score corresponding to "worst" base at each position
         // FIXME: iter ...
         for i in 0 .. pwm_len {
@@ -113,7 +127,7 @@ impl Motif {
     ///   https://www.ncbi.nlm.nih.gov/pmc/articles/PMC169193/
     ///
     pub fn score(&self, seq: &[u8]) -> Option<(usize, f32)> {
-        let (pwm_len, _) = self.counts.as_ref().expect("score: no counts").dim();
+        let (pwm_len, _) = self.scores.dim();
         if seq.len() < pwm_len {
             return None
         }
