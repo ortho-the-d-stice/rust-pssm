@@ -4,6 +4,8 @@ use std::convert::From;
 use ndarray::prelude::{Array, Array2, Axis};
 use std::f32;
 
+const EPSILON: f32 = 1e-5;
+
 struct Base([f32; 4]);
 
 impl Base {
@@ -42,7 +44,7 @@ impl BasePos {
             b'T' => BasePos::T as usize,
             b'G' => BasePos::G as usize,
             b'C' => BasePos::C as usize,
-            _ => panic!("unrecognized base"),
+            _ => panic!("unrecognized base {}", base),
         }
     }
     pub fn put(code: usize) -> u8 {
@@ -141,14 +143,20 @@ impl Motif {
         self.min_score = 0.0;
         for i in 0..pwm_len {
             // can't use the regular min/max on f32, so we use f32::min
-            let min_sc = (0..4).map(|b| self.scores[[i, b]]).fold(f32::INFINITY, f32::min);
+            let min_sc = (0..4).map(|b| self.scores[[i, b]]).fold(
+                f32::INFINITY,
+                f32::min,
+            );
             self.min_score += min_sc;
         }
 
         // score corresponding to "best" base at each position
         self.max_score = 0.0;
         for i in 0..pwm_len {
-            let max_sc = (0..4).map(|b| self.scores[[i, b]]).fold(f32::NEG_INFINITY, f32::max);
+            let max_sc = (0..4).map(|b| self.scores[[i, b]]).fold(
+                f32::NEG_INFINITY,
+                f32::max,
+            );
             self.max_score += max_sc;
         }
     }
@@ -158,8 +166,60 @@ impl Motif {
         Vec::new()
     }
 
+    /// derived from
+    /// https://github.com/biopython/biopython/blob/master/Bio/motifs/matrix.py#L205
     pub fn degenerate_consensus(&self) -> Vec<u8> {
-        Vec::new()
+        fn two(_a: u8, _b: u8) -> u8 {
+            let (a,b) = if _b > _a { (_a,_b) } else { (_a,_b) };
+            match (a, b) {
+                (b'A', b'C') => b'M',
+                (b'A', b'G') => b'R',
+                (b'A', b'T') => b'W',
+                (b'C', b'G') => b'S',
+                (b'C', b'T') => b'Y',
+                (b'G', b'T') => b'K',
+                _ => panic!("unrecognized bases"),
+            }
+        }
+        fn three(a: u8, b: u8, c: u8) -> u8 {
+            let complete: usize = b'A' as usize + b'T' as usize + b'G' as usize + b'C' as usize;
+            let sum: usize = a as usize + b as usize + c as usize;
+            // we'll base the lookup on what's _missing_
+            match (complete - sum) as u8 {
+                b'T' => b'V',
+                b'G' => b'H',
+                b'C' => b'D',
+                b'A' => b'B',
+                _ => panic!("weirdo triplet"),
+            }
+        }
+
+        let len = self.len();
+        let mut res = Vec::with_capacity(len);
+        for pos in 0..len {
+            let mut fracs = (0..4)
+                .map(|b| (self.scores[[pos, b]], b))
+                .collect::<Vec<(f32, usize)>>();
+            // note: reverse sort
+            fracs.sort_by(|a, b| b.partial_cmp(a).unwrap());
+
+            res.push(if fracs[0].0 > 0.5 && fracs[0].0 > 2.0 * fracs[1].0 {
+                BasePos::put(fracs[0].1)
+            } else if 4.0 * (fracs[0].0 + fracs[1].0) > 3.0 {
+                two(BasePos::put(fracs[0].1), BasePos::put(fracs[1].1))
+            } else if fracs[3].0 < EPSILON {
+                match BasePos::put(fracs[3].1) {
+                    b'T' => b'V',
+                    b'G' => b'H',
+                    b'C' => b'D',
+                    b'A' => b'B',
+                    _ => panic!("weirdo triplet"),
+                }
+            } else {
+                b'N'
+            });
+        }
+        res
     }
 
     /// apply PSM to sequence, finding the offset with the highest score
@@ -182,7 +242,9 @@ impl Motif {
         let mut best_score = -1.0;
         let mut best_m = Vec::new();
         for start in 0..seq.len() - pwm_len + 1 {
-            let m: Vec<f32> = (0..pwm_len).map(|i| self.scores[[i, BasePos::get(seq[start + i])]]).collect();
+            let m: Vec<f32> = (0..pwm_len)
+                .map(|i| self.scores[[i, BasePos::get(seq[start + i])]])
+                .collect();
             let tot = m.iter().sum();
             if tot > best_score {
                 best_score = tot;
@@ -190,9 +252,17 @@ impl Motif {
                 best_m = m;
             }
         }
-        if best_score < 0.0 || best_score - self.min_score < 0.0 || self.max_score - self.min_score < 0.0 {
-            println!("@@ found problem: best = {}; num = {} - {} = {}; demon = {}",
-                     best_score, best_score, self.min_score, best_score - self.min_score, self.max_score - self.min_score);
+        if best_score < 0.0 || best_score - self.min_score < 0.0 ||
+            self.max_score - self.min_score < 0.0
+        {
+            println!(
+                "@@ found problem: best = {}; num = {} - {} = {}; demon = {}",
+                best_score,
+                best_score,
+                self.min_score,
+                best_score - self.min_score,
+                self.max_score - self.min_score
+            );
         }
         Some(ScoredPos {
             loc: best_start,
