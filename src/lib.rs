@@ -170,7 +170,7 @@ impl Motif {
     /// https://github.com/biopython/biopython/blob/master/Bio/motifs/matrix.py#L205
     pub fn degenerate_consensus(&self) -> Vec<u8> {
         fn two(_a: u8, _b: u8) -> u8 {
-            let (a,b) = if _b > _a { (_a,_b) } else { (_a,_b) };
+            let (a,b) = if _b > _a { (_a,_b) } else { (_b,_a) };
             match (a, b) {
                 (b'A', b'C') => b'M',
                 (b'A', b'G') => b'R',
@@ -178,7 +178,7 @@ impl Motif {
                 (b'C', b'G') => b'S',
                 (b'C', b'T') => b'Y',
                 (b'G', b'T') => b'K',
-                _ => panic!("unrecognized bases"),
+                _ => panic!("unrecognized bases: {}, {}", a, b),
             }
         }
         fn three(a: u8, b: u8, c: u8) -> u8 {
