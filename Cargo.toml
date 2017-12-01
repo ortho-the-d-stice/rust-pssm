@@ -4,4 +4,4 @@ version = "0.2.0"
 authors = ["ortho 'the darkness' stice <ortho.the.d.stice@gmail.com>"]
 
 [dependencies]
-ndarray = "0.9"
+ndarray = "0.10"
