@@ -1,6 +1,7 @@
 
 extern crate ndarray;
 use std::convert::From;
+use std::default;
 use ndarray::prelude::{Array, Array2, Axis};
 use std::f32;
 
@@ -59,15 +60,15 @@ impl BasePos {
 }
 
 /// represents motif score
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ScoredPos {
     pub loc: usize,
     pub sum: f32,
     pub scores: Vec<f32>,
 }
 
-impl ScoredPos {
-    pub fn nil() -> ScoredPos {
+impl Default for ScoredPos {
+    fn default() -> ScoredPos {
         ScoredPos {
             loc: 0,
             sum: f32::NEG_INFINITY,
@@ -222,6 +223,29 @@ impl Motif {
         res
     }
 
+    // standard PSSM scoring is calibrated to (1) pattern len and (2) the min and
+    //     max possible scores
+    // this is just a dumb sum of matching bases
+    pub fn raw_score(&self, seq: &[u8]) -> (usize, f32, Vec<f32>) {
+        let pwm_len = self.len();
+
+        let mut best_start = 0;
+        let mut best_score = -1.0;
+        let mut best_m = Vec::new();
+        for start in 0..seq.len() - pwm_len + 1 {
+            let m: Vec<f32> = (0..pwm_len)
+                .map(|i| self.scores[[i, BasePos::get(seq[start + i])]])
+                .collect();
+            let tot = m.iter().sum();
+            if tot > best_score {
+                best_score = tot;
+                best_start = start;
+                best_m = m;
+            }
+        }
+        (best_start, best_score, best_m)
+    }
+
     /// apply PSM to sequence, finding the offset with the highest score
     /// return None if sequence is too short
     /// see:
@@ -238,20 +262,8 @@ impl Motif {
             return None;
         }
 
-        let mut best_start = 0;
-        let mut best_score = -1.0;
-        let mut best_m = Vec::new();
-        for start in 0..seq.len() - pwm_len + 1 {
-            let m: Vec<f32> = (0..pwm_len)
-                .map(|i| self.scores[[i, BasePos::get(seq[start + i])]])
-                .collect();
-            let tot = m.iter().sum();
-            if tot > best_score {
-                best_score = tot;
-                best_start = start;
-                best_m = m;
-            }
-        }
+        let (best_start, best_score, best_m) = self.raw_score(seq);
+
         if best_score < 0.0 || best_score - self.min_score < 0.0 ||
             self.max_score - self.min_score < 0.0
         {
