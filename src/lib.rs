@@ -1,4 +1,7 @@
 
+#[macro_use]
+extern crate serde_derive;
+
 extern crate ndarray;
 use std::convert::From;
 use std::default;
@@ -60,7 +63,7 @@ impl BasePos {
 }
 
 /// represents motif score
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ScoredPos {
     pub loc: usize,
     pub sum: f32,
@@ -77,7 +80,7 @@ impl Default for ScoredPos {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Motif {
     pub seqs: Option<Vec<Vec<u8>>>,
     pub counts: Option<Array2<u16>>,
